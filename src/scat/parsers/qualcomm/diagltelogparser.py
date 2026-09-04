@@ -189,6 +189,9 @@ class DiagLteLogParser:
         if getattr(self.parent, 'cell_kv', False):
             radio_id = args['radio_id'] if (args and 'radio_id' in args) else 0
             cache = self.parent.lte_serving_cell[radio_id] if (self.parent and radio_id in (0, 1)) else {}
+            if self.parent and radio_id in (0, 1):
+                self.parent.lte_serving_signal[radio_id] = {'earfcn': item.earfcn, 'pci': pci,
+                    'rssi': real_rssi, 'rsrp': real_rsrp, 'rsrq': real_rsrq}
             ident = util.serving_identity_fields(cache, item.earfcn, pci)
             stdout = util.format_cell_kv('lte', 'scell', pci, item.earfcn,
                 util.calculate_ul_earfcn(item.earfcn), util.dl_earfcn_to_frequency_hz(item.earfcn),
@@ -1285,6 +1288,25 @@ class DiagLteLogParser:
             tac_cid_fmt = 'TAC/CID: {}/{} ({:#x}/{:#x})'.format(item.tac, item.cell_id, item.tac, item.cell_id)
         else:
             tac_cid_fmt = 'xTAC/xCID: {:x}/{:x}'.format(item.tac, item.cell_id)
+
+        if getattr(self.parent, 'cell_kv', False):
+            # Emit an identity-bearing serving-cell line (CellID/TAC/PLMN) joined to
+            # the last ML1 signal for this cell, so CellID is captured even when the
+            # RRC packet arrives before the next ML1 measurement. Skip when no signal
+            # is cached yet (all-zero metric lines are dropped downstream); the ML1
+            # join then fills identity onto the next measurement instead.
+            sig = self.parent.lte_serving_signal[radio_id] if radio_id in (0, 1) else {}
+            if sig.get('earfcn') == item.dl_earfcn and sig.get('pci') == item.pci:
+                stdout = util.format_cell_kv('lte', 'scell', item.pci, item.dl_earfcn,
+                    item.ul_earfcn, util.dl_earfcn_to_frequency_hz(item.dl_earfcn),
+                    rssi=sig['rssi'], rsrp=sig['rsrp'], rsrq=sig['rsrq'],
+                    plmn=util.format_plmn(item.mcc, item.mnc, item.mnc_digit),
+                    mcc=item.mcc, mnc=item.mnc, tac=item.tac, cid=item.cell_id,
+                    band=item.band, bwmhzdl=prb_to_mhz.get(item.dl_bw, 0),
+                    bwmhzul=prb_to_mhz.get(item.ul_bw, 0))
+            else:
+                stdout = ''
+            return {'stdout': stdout, 'ts': pkt_ts}
 
         if item.mnc_digit == 2:
             stdout = 'LTE RRC SCell Info: EARFCN: {}/{}, Band: {}, Bandwidth: {}, PCI: {}, MCC: {}, MNC: {:02}, {}'.format(item.dl_earfcn,

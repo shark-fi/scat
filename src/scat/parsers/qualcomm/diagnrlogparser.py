@@ -148,9 +148,13 @@ class DiagNrLogParser:
             if cell_kv:
                 nr_ident = util.serving_identity_fields(nr_cache, meas_carrier_list.raster_arfcn, meas_carrier_list.serv_cell_pci)
                 nr_earfcn_ul = nr_cache.get('earfcn_ul', meas_carrier_list.raster_arfcn) if nr_ident else meas_carrier_list.raster_arfcn
+                nr_serv_rsrp = self.parse_float_q7(meas_carrier_list.serv_rsrp_rx_0)
+                if self.parent and radio_id in (0, 1):
+                    self.parent.nr_serving_signal[radio_id] = {'earfcn': meas_carrier_list.raster_arfcn,
+                        'pci': meas_carrier_list.serv_cell_pci, 'rsrp': nr_serv_rsrp}
                 kv_lines.append(util.format_cell_kv('nr', 'scell', meas_carrier_list.serv_cell_pci,
                     meas_carrier_list.raster_arfcn, nr_earfcn_ul, nr_frequency,
-                    rsrp=self.parse_float_q7(meas_carrier_list.serv_rsrp_rx_0), **nr_ident))
+                    rsrp=nr_serv_rsrp, **nr_ident))
             else:
                 stdout += "Layer {}: NR-ARFCN: {}, SCell PCI: {:4d}/SSB: {}, {}, RX beam: {}/{}, Num Cells: {} (S: {})\n".format(
                     layer, meas_carrier_list.raster_arfcn, meas_carrier_list.serv_cell_pci, meas_carrier_list.serv_ssb & 0xf,
@@ -288,6 +292,21 @@ class DiagNrLogParser:
                 'cid': item.cell_id, 'band': item.band,
                 'bwmhzdl': item.dl_bandwidth, 'bwmhzul': item.ul_bandwidth,
             }
+
+        if getattr(self.parent, 'cell_kv', False):
+            # Emit an identity-bearing serving-cell line (CellID/TAC/PLMN) joined to
+            # the last ML1 signal, so CellID is captured order-independently. Skip
+            # when no signal is cached yet (the ML1 join fills it onto the next meas).
+            sig = self.parent.nr_serving_signal[radio_id] if radio_id in (0, 1) else {}
+            if sig.get('earfcn') == item.dl_nrarfcn and sig.get('pci') == item.pci:
+                stdout = util.format_cell_kv('nr', 'scell', item.pci, item.dl_nrarfcn,
+                    item.ul_nrarfcn, util.nrarfcn_to_frequency_hz(item.dl_nrarfcn),
+                    rsrp=sig['rsrp'], plmn=util.format_plmn(item.mcc, item.mnc, item.mnc_digit),
+                    mcc=item.mcc, mnc=item.mnc, tac=item.tac, cid=item.cell_id,
+                    band=item.band, bwmhzdl=item.dl_bandwidth, bwmhzul=item.ul_bandwidth)
+            else:
+                stdout = ''
+            return {'stdout': stdout, 'ts': pkt_ts}
 
         if self.display_format == 'd':
             tac_cid_fmt = 'TAC/CID: {}/{}'.format(item.tac, item.cell_id)
